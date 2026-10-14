@@ -1,0 +1,3 @@
+# Nothing to install. Website Metadata Hunter runs on the Python standard library only.
+# (The GUI uses tkinter, which ships with the python.org installers for Windows and macOS;
+#  on Debian/Ubuntu it is the "python3-tk" system package.)
