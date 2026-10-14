@@ -8,6 +8,7 @@ import dataclasses
 import datetime
 import hashlib
 import threading
+import zlib
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -17,6 +18,7 @@ from .discovery.crawler import Crawler
 from .discovery.subdomains import enumerate_subdomains, resolve_names
 from .discovery.wayback import archived_files
 from .extractors import extract_metadata
+from .extractors.binary import TooLarge, inflate
 from .extractors.exiftool import ExifTool
 from .net.http import DEFAULT_USER_AGENT, FetchError, Fetcher
 from .net.urls import base_domain, extension_of, file_name_of, host_of, in_scope, is_same_or_subdomain, normalise_target
@@ -144,6 +146,11 @@ def _download_and_process(reference, fetcher, processor, options):
     except FetchError as error:
         result.status = f"error: {error}"
         return result
+    if data[:2] == b"\x1f\x8b":       # some servers (and the Wayback Machine) hand out gzip-compressed bodies
+        try:
+            data = inflate(data, int(options.max_file_mb * 1024 * 1024), wbits=31)
+        except (TooLarge, zlib.error):
+            pass                       # keep the raw bytes; the parsers will say what they can
     return processor.process(result, data, headers, name, host_of(source) or "inline")
 
 

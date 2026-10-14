@@ -15,11 +15,16 @@ to black out in a PDF.
 ```
 git clone https://github.com/<you>/Website-Metadata-Hunter.git
 cd Website-Metadata-Hunter
-python hunter.py
 ```
 
-That prints every command with examples, then offers a guided wizard. On macOS / Linux use
-`python3` if `python` points to Python 2. For the GUI: `python hunter.py gui`.
+Then start whichever interface you prefer:
+
+```
+python hunter.py          # terminal: prints every command with examples, then offers a guided wizard
+python hunter.py gui      # graphical interface
+```
+
+On macOS / Linux use `python3` if `python` points to Python 2.
 
 | System | Python | GUI (tkinter) |
 | --- | --- | --- |
