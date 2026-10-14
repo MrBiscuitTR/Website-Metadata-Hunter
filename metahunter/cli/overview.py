@@ -42,6 +42,12 @@ MAIN SCAN OPTIONS ("python hunter.py help scan" lists all)
                          where to look for subdomains (third-party ones are opt-in)      [none]
   --no-redaction-check   skip the PDF hidden-text check (on by default)
   --max-files N          stop after N files                                               [500]
+  --view LIST            {views}
+                         what to print in the terminal when done                          [summary]
+  --no-report-files      only print results, write no report files
+
+WHILE IT RUNS
+  Ctrl+C pauses and asks: continue, stop (report still written), restart or quit. Twice quits.
 
 OUTPUT
   .scans/<site>_<ddMMyyyyHHmm>/  report.html, report.json, summary.txt, files/, pdf_analysis/
@@ -50,5 +56,6 @@ OUTPUT
 
 
 def overview_text():
+    from .views import VIEWS
     return OVERVIEW.format(version=__version__, types=",".join(FILE_TYPES), info=",".join(INFO_CATEGORIES),
-                           sources=",".join(SUBDOMAIN_SOURCES))
+                           sources=",".join(SUBDOMAIN_SOURCES), views=",".join(VIEWS))

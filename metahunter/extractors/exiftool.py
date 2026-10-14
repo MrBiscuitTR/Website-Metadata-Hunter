@@ -161,7 +161,6 @@ class ExifTool:
         """Returns (ExifTool or None, a one-line status message for the user)."""
         if not _strip_quotes(setting):
             return None, "ExifTool not configured; using the built-in parsers."
-
         executable = locate_executable(setting, base_folder)
         if executable is None:
             return None, f"ExifTool not found at {setting!r}; using the built-in parsers."

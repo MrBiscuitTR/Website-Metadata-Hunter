@@ -28,8 +28,9 @@ class WrappingLabel(ttk.Label):
     """A label whose text re-wraps to whatever width it is given, so it never overflows."""
 
     def __init__(self, parent, **options):
-        super().__init__(parent, **options)
-        self.bind("<Configure>", lambda event: self.configure(wraplength=max(event.width - 4, 100)))
+        # Start narrow so the label never asks for a wide window, then follow the real width.
+        super().__init__(parent, wraplength=480, **options)
+        self.bind("<Configure>", lambda event: self.configure(wraplength=max(event.width - 4, 200)))
 
 
 def open_path(path):
@@ -49,7 +50,10 @@ class HunterWindow:
         self.events = None
         self.worker = None
         self.last_result = None
+        self.last_job = None
+        self.run_id = 0
         self.variables = {}
+
         root.title("Website Metadata Hunter")
         root.columnconfigure(0, weight=1)
         root.rowconfigure(2, weight=1)
@@ -100,8 +104,12 @@ class HunterWindow:
         entry.focus_set()
         self.start_button = ttk.Button(row, text="Start scan", command=self.start_scan)
         self.start_button.grid(row=0, column=2, padx=(0, 6))
+        self.pause_button = ttk.Button(row, text="Pause", command=self.toggle_pause, state="disabled")
+        self.pause_button.grid(row=0, column=3, padx=(0, 6))
         self.stop_button = ttk.Button(row, text="Stop", command=self.stop_scan, state="disabled")
-        self.stop_button.grid(row=0, column=3)
+        self.stop_button.grid(row=0, column=4, padx=(0, 6))
+        self.restart_button = ttk.Button(row, text="Restart", command=self.restart, state="disabled")
+        self.restart_button.grid(row=0, column=5)
         ttk.Label(row, text="A domain (example.com), a subdomain (blog.example.com) or one page URL.",
                   foreground="#5d6675").grid(row=1, column=1, sticky="w", padx=8, pady=(2, 0))
 
@@ -166,7 +174,7 @@ class HunterWindow:
         types = ttk.LabelFrame(tab, text="Collect these file types", padding=6)
         types.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         for row, (name, (label, extensions)) in enumerate(FILE_TYPES.items()):
-            shown = ", ".join(extensions[:7]) + (", ..." if len(extensions) > 7 else "")
+            shown = ", ".join(extensions[:4]) + (", ..." if len(extensions) > 4 else "")
             self._checkbox(types, f"type_{name}", True, f"{label} ({shown})", row)
         limits = ttk.LabelFrame(tab, text="Limits and saving", padding=6)
         limits.grid(row=0, column=1, sticky="nsew")
@@ -176,15 +184,18 @@ class HunterWindow:
         self._checkbox(limits, "save_files", True, "Keep copies of downloaded files", 2)
         self._checkbox(limits, "save_embedded", True, "Save thumbnails, cover art, attachments", 3)
         self._checkbox(limits, "leak_scan", True, "Search files for user folders and emails", 4)
+        self._checkbox(limits, "save_reports", True, "Save reports (HTML, JSON, text, PDF analysis)", 5)
+
 
     def _information_tab(self, tab):
         WrappingLabel(tab, text="Everything is extracted; these choices decide what goes into the report."
-                      ).grid(row=0, column=0, columnspan=2, sticky="ew", **PADDING)
-        for index, (name, text) in enumerate(INFO_CATEGORIES.items()):
-            self._checkbox(tab, f"info_{name}", True, f"{name.capitalize()}: {text}", 1 + index // 2, index % 2)
-        tab.columnconfigure(1, weight=1)
+                      ).grid(row=0, column=0, sticky="ew", **PADDING)
+        for index, (name, text) in enumerate(INFO_CATEGORIES.items(), start=1):
+            title = name.upper() if name == "http" else name.capitalize()
+            box = self._checkbox(tab, f"info_{name}", True, f"{title}: {text}", index)
+            box.grid_configure(pady=1)
         buttons = ttk.Frame(tab)
-        buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        buttons.grid(row=len(INFO_CATEGORIES) + 1, column=0, sticky="w", pady=(6, 0))
         ttk.Button(buttons, text="Select all", command=lambda: self._set_info(True)).grid(row=0, column=0, **PADDING)
         ttk.Button(buttons, text="Select none", command=lambda: self._set_info(False)).grid(row=0, column=1, **PADDING)
 
@@ -270,7 +281,7 @@ class HunterWindow:
             info_categories=[name for name in INFO_CATEGORIES if get(f"info_{name}")],
             max_files=self._read_number("max_files", int, "Maximum files"),
             max_file_mb=self._read_number("max_file_mb", float, "Maximum file size"),
-            redaction_check=get("redaction_check"), save_files=get("save_files"),
+            redaction_check=get("redaction_check"), save_files=get("save_files"), save_reports=get("save_reports"),
             save_embedded=get("save_embedded"), leak_scan=get("leak_scan"),
             threads=self._read_number("threads", int, "Parallel downloads"),
             delay=self._read_number("delay", float, "Seconds between requests"),
@@ -316,8 +327,11 @@ class HunterWindow:
         self._run(lambda events: inspect_local(list(paths), options, events), f"Inspecting {len(paths)} file(s)")
 
     def _run(self, job, status):
-        self.events = ScanEvents(on_log=lambda message: self.messages.put(("log", message)),
-                                 on_progress=lambda done, total, label: self.messages.put(("progress", (done, total))))
+        self.last_job = (job, status)
+        self.run_id += 1
+        run_id = self.run_id                 # messages from an abandoned run are ignored
+        self.events = ScanEvents(on_log=lambda message: self.messages.put((run_id, "log", message)),
+                                 on_progress=lambda done, total, label: self.messages.put((run_id, "progress", (done, total))))
         self._set_running(True)
         self.status.set(status + "...")
         self.progress.configure(value=0, maximum=1)
@@ -326,26 +340,138 @@ class HunterWindow:
 
         def work():
             try:
-                self.messages.put(("done", job(events)))
+                self.messages.put((run_id, "done", job(events)))
             except (ValueError, FetchError, FileNotFoundError, OSError) as error:
-                self.messages.put(("error", str(error)))
+                self.messages.put((run_id, "error", str(error)))
             except Exception as error:     # show anything unexpected instead of failing silently
-                self.messages.put(("error", f"{type(error).__name__}: {error}"))
+                self.messages.put((run_id, "error", f"{type(error).__name__}: {error}"))
 
         self.worker = threading.Thread(target=work, daemon=True)
         self.worker.start()
 
+    def toggle_pause(self):
+        if not self.worker or not self.events:
+            return
+        if self.events.paused():
+            self.events.resume()
+            self.pause_button.configure(text="Pause")
+            self.status.set("Continuing...")
+        else:
+            self.events.pause()
+            self.pause_button.configure(text="Continue")
+            self.status.set("Paused. Nothing new starts until you press Continue.")
+
     def stop_scan(self):
-        if self.events:
+        if self.worker and self.events:
             self.events.request_stop()
-            self.status.set("Stopping after the files in progress; the report will still be written...")
-            self.stop_button.configure(state="disabled")
+            self.status.set("Stopping; the report is written with what was collected...")
+            for button in (self.stop_button, self.pause_button):
+                button.configure(state="disabled")
+
+    def restart(self):
+        """Run the last job again from scratch; a running one is abandoned without a report."""
+        if not self.last_job:
+            return
+        if self.worker and self.events:
+            self.events.abort()              # the old worker stops quietly and writes nothing more
+            self._append_log("--- restarting ---")
+        self._run(*self.last_job)
 
     def _set_running(self, running):
         idle = "disabled" if running else "normal"
         for button in (self.start_button, self.inspect_button, self.pdf_button):
             button.configure(state=idle)
-        self.stop_button.configure(state="normal" if running else "disabled")
+        for button in (self.stop_button, self.pause_button):
+            button.configure(state="normal" if running else "disabled")
+        self.pause_button.configure(text="Pause")
+        self.restart_button.configure(state="normal" if running or self.last_job else "disabled")
         if running:
             self.report_button.configure(state="disabled")
             self.folder_button.configure(state="disabled")
+
+    # ------------------------------------------------------------ messages from the worker
+
+    def _append_log(self, text):
+        self.log.configure(state="normal")
+        self.log.insert("end", text + "\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _drain_messages(self):
+        try:
+            for _ in range(500):
+                run_id, kind, payload = self.messages.get_nowait()
+                if run_id != self.run_id:
+                    continue
+                if kind == "log":
+                    self._append_log(payload)
+                elif kind == "progress":
+                    done, total = payload
+                    self.progress.configure(maximum=max(total, 1), value=done)
+                    if not self.events.paused():
+                        self.status.set(f"Reading files: {done} of {total}")
+                elif kind in ("done", "error"):
+                    self._finished(kind, payload)
+        except queue.Empty:
+            pass
+        self.root.after(POLL_MS, self._drain_messages)
+
+    def _finished(self, kind, payload):
+        self.worker = None
+        self._set_running(False)
+        if kind == "error":
+            self.status.set("Failed.")
+            self._append_log(f"Error: {payload}")
+            messagebox.showerror("Scan failed", payload, parent=self.root)
+            return
+        result = payload
+        self.last_result = result
+        readable = sum(1 for item in result.files if item.metadata is not None)
+        state = "Stopped early" if result.stopped else "Done"
+        self.status.set(f"{state}: {readable} file(s) read from {len(result.pages)} page(s).")
+        if result.report_files:
+            self._append_log(f"Report: {result.report_files['html']}")
+            self.report_button.configure(state="normal")
+        else:
+            from ..cli.views import view_summary    # no report file: show the summary right here
+            self._append_log(view_summary(result))
+        if result.folder.created:
+            self.folder_button.configure(state="normal")
+
+    # ------------------------------------------------------------ buttons
+
+    def open_report(self):
+        if self.last_result and self.last_result.report_files:
+            webbrowser.open(Path(self.last_result.report_files["html"]).resolve().as_uri())
+
+    def open_folder(self):
+        if self.last_result and self.last_result.folder.created:
+            open_path(self.last_result.folder.root)
+
+    def _on_close(self):
+        if not self.worker:
+            self.root.destroy()
+            return
+        if messagebox.askyesno("Scan running", "Stop the scan and close? Nothing more is written.", parent=self.root):
+            self.events.abort()          # background threads stop writing and end with the program
+            self.root.destroy()
+
+
+def launch():
+    if sys.platform.startswith("win"):
+        try:                             # crisp text on high-DPI screens
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except (AttributeError, OSError):
+            pass
+    try:
+        root = tk.Tk()
+    except tk.TclError as error:
+        print(f"Cannot open a window ({error}). Use the terminal commands instead: python hunter.py")
+        return 1
+    style = ttk.Style(root)
+    if sys.platform.startswith("linux") and "clam" in style.theme_names():
+        style.theme_use("clam")
+    HunterWindow(root)
+    root.mainloop()
+    return 0

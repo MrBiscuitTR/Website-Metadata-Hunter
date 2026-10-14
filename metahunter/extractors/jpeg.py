@@ -52,7 +52,6 @@ def extract(data, meta):
         if end >= 0 and len(data) - (end + 2) > 16:
             trailing = len(data) - (end + 2)
             meta.add_deep("hidden", "Data after end of image", f"{trailing} bytes (appended file or second image)")
-
             meta.add_embedded("Data after end of image", "bin", data[end + 2:])
 
 

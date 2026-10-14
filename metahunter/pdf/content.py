@@ -18,6 +18,7 @@ MAX_OPERATIONS_PER_DOCUMENT = 3_000_000
 MAX_STATE_STACK = 256
 INLINE_IMAGE_END = re.compile(rb"\sEI(?=\s|$)")
 FILL_OPERATORS = {"f", "F", "f*", "B", "B*", "b", "b*"}
+OPAQUE = 0.9          # fill opacity from which paint is treated as hiding what is underneath
 
 
 def multiply(first, second):
@@ -37,7 +38,7 @@ def translate(x, y):
 
 @dataclasses.dataclass
 class TextRun:
-    """One text-showing operation. `chars` holds each glyph with its centre point."""
+    """One text-showing operation. `chars` holds (text, centre x, centre y, half width) per glyph."""
     page: int
     order: int
     text: str
@@ -53,12 +54,17 @@ class TextRun:
 
 @dataclasses.dataclass
 class PaintedBox:
-    """A filled shape or an image, as a page-space bounding box (x0, y0, x1, y1)."""
+    """A filled shape or an image, as a page-space bounding box (x0, y0, x1, y1).
+
+    `opaque` is False for see-through paint: zero or low fill opacity, or images with a
+    transparency mask (signature scans, logos). Those cannot hide what is under them.
+    """
     page: int
     order: int
     bbox: tuple
     kind: str
     fill: tuple
+    opaque: bool = True
 
 
 @dataclasses.dataclass
@@ -73,6 +79,8 @@ class GraphicsState:
     leading: float = 0.0
     rise: float = 0.0
     render_mode: int = 0
+    fill_alpha: float = 1.0
+    clip: tuple = None          # bounding box of the clipping area; None means the whole page
 
     def copy(self):
         return dataclasses.replace(self)
@@ -103,6 +111,15 @@ def _bounding_box(points):
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _intersect(box, clip):
+    """The visible part of a box inside the clipping area, or None if nothing is visible."""
+    if clip is None:
+        return box
+    x0, y0 = max(box[0], clip[0]), max(box[1], clip[1])
+    x1, y1 = min(box[2], clip[2]), min(box[3], clip[3])
+    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
 
 
 class DocumentInterpreter:
@@ -156,7 +173,7 @@ class DocumentInterpreter:
     def execute(self, content, resources, state, depth):
         parser = Parser(content)
         stack, operands, path = [], [], []
-        curved = False
+        curved = clipping = False
         text_matrix = line_matrix = IDENTITY
         while self.operations <= MAX_OPERATIONS_PER_DOCUMENT:
             try:
@@ -205,16 +222,19 @@ class DocumentInterpreter:
                 if point and path:
                     path[-1].append(apply(state.ctm, *point))
                 curved = curved or operator != "l"
-            elif operator in FILL_OPERATORS:
-                if not curved:
+            elif operator in ("W", "W*"):
+                clipping = True                     # takes effect when the path is finished
+            elif operator in FILL_OPERATORS or operator in ("n", "S", "s"):
+                if operator in FILL_OPERATORS and not curved:
                     for subpath in path:
-                        if len(subpath) >= 3:
-                            box = _bounding_box(subpath)
-                            if box[2] - box[0] > 0.5 and box[3] - box[1] > 0.5:
-                                self.boxes.append(PaintedBox(self._page, self._next_order(), box, "fill", state.fill))
-                path, curved = [], False
-            elif operator in ("n", "S", "s"):
-                path, curved = [], False
+                        box = _intersect(_bounding_box(subpath), state.clip) if len(subpath) >= 3 else None
+                        if box and box[2] - box[0] > 0.5 and box[3] - box[1] > 0.5:
+                            self.boxes.append(PaintedBox(self._page, self._next_order(), box, "fill", state.fill,
+                                                         opaque=state.fill_alpha >= OPAQUE))
+                if clipping and path:
+                    points = [point for subpath in path for point in subpath]
+                    state.clip = _intersect(_bounding_box(points), state.clip) or (0.0, 0.0, 0.0, 0.0)
+                path, curved, clipping = [], False, False
             elif operator == "BT":
                 text_matrix = line_matrix = IDENTITY
             elif operator == "Tf" and len(operands) >= 2:
@@ -253,6 +273,8 @@ class DocumentInterpreter:
                     elif isinstance(item, (int, float)):
                         shift = -item / 1000 * state.font_size * state.horizontal_scale
                         text_matrix = multiply(translate(shift, 0), text_matrix)
+            elif operator == "gs" and operands:
+                state.fill_alpha = self._fill_alpha(resources, operands[-1], state.fill_alpha)
             elif operator == "Do" and operands:
                 self._draw_xobject(operands[-1], resources, state, depth)
             elif operator == "BI":
@@ -286,21 +308,37 @@ class DocumentInterpreter:
         for text, width, is_space in font.decode(raw):
             glyph_width = width / 1000 * size * scale
             centre = apply(matrix, advance + glyph_width / 2, state.rise + size * 0.35)
-            chars.append((text, centre[0], centre[1]))
+            edge = apply(matrix, advance + glyph_width, state.rise + size * 0.35)
+            chars.append((text, centre[0], centre[1], abs(edge[0] - centre[0])))
             advance += glyph_width + (state.char_spacing + (state.word_spacing if is_space else 0)) * scale
         origin = apply(matrix, 0, state.rise)
         top = apply(matrix, 0, state.rise + size)
-        if any(text.strip() for text, _, _ in chars):
+        if any(char[0].strip() for char in chars):
             self.runs.append(TextRun(
-                page=self._page, order=self._next_order(), text="".join(text for text, _, _ in chars),
+                page=self._page, order=self._next_order(), text="".join(char[0] for char in chars),
                 x=origin[0], y=origin[1], end_x=apply(matrix, advance, state.rise)[0],
                 size=math.hypot(top[0] - origin[0], top[1] - origin[1]), font=font.name,
                 render_mode=state.render_mode, fill=state.fill, chars=chars))
         return multiply(translate(advance, 0), text_matrix)
 
-    def _add_image_box(self, state):
+    def _fill_alpha(self, resources, name, current):
+        """Fill opacity after a gs operator: its ExtGState's /ca, and a soft mask makes it see-through."""
+        states = self.document.resolve(resources.get("ExtGState"))
+        settings = self.document.resolve(states.get(name)) if isinstance(states, dict) else None
+        if not isinstance(settings, dict):
+            return current
+        alpha = settings.get("ca", current)
+        mask = settings.get("SMask")
+        if mask not in (None, "None"):
+            alpha = min(alpha, 0.5) if isinstance(alpha, (int, float)) else 0.5
+        return float(alpha) if isinstance(alpha, (int, float)) else current
+
+    def _add_image_box(self, state, transparent=False):
         corners = [apply(state.ctm, x, y) for x, y in ((0, 0), (1, 0), (1, 1), (0, 1))]
-        self.boxes.append(PaintedBox(self._page, self._next_order(), _bounding_box(corners), "image", None))
+        box = _intersect(_bounding_box(corners), state.clip)
+        if box:
+            self.boxes.append(PaintedBox(self._page, self._next_order(), box, "image", None,
+                                         opaque=not transparent and state.fill_alpha >= OPAQUE))
 
     def _draw_xobject(self, name, resources, state, depth):
         resolve = self.document.resolve
@@ -311,7 +349,7 @@ class DocumentInterpreter:
             return
         subtype = xobject.get("Subtype")
         if subtype == "Image":
-            self._add_image_box(state)
+            self._add_image_box(state, transparent="SMask" in xobject.attributes or "Mask" in xobject.attributes)
         elif subtype == "Form" and depth < MAX_FORM_DEPTH:
             if isinstance(reference, Ref):
                 self.referenced_streams.add(reference.number)

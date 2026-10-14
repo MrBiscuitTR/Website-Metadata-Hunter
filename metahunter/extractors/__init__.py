@@ -19,7 +19,7 @@ FORMAT_NAMES = {
     "bmp": "BMP image", "ico": "Windows icon", "svg": "SVG image", "bmff": "MP4 / MOV / M4A / HEIC / AVIF",
     "pdf": "PDF document", "zip": "ZIP-based document or archive", "ole": "Legacy Office / OLE2 document",
     "mp3": "MP3 audio", "flac": "FLAC audio", "ogg": "Ogg / Opus audio", "wav": "WAV audio", "avi": "AVI video",
-    "matroska": "Matroska / WebM video", "unknown": "unrecognised",
+    "matroska": "Matroska / WebM video", "font": "Font", "unknown": "unrecognised",
 }
 MAX_NESTING = 3
 _nesting = threading.local()
@@ -63,6 +63,8 @@ def detect_format(data, name=""):
             return "ico"
     if b"<svg" in data[:4096].lower():
         return "svg"
+    if head[:4] in (b"\x00\x01\x00\x00", b"OTTO", b"true", b"wOFF", b"wOF2", b"ttcf"):
+        return "font"       # no built-in parser; ExifTool reads font names and copyrights
     return "unknown"
 
 

@@ -3,7 +3,7 @@
 import base64
 import struct
 
-from .metadata import Metadata, decode_text
+from .metadata import decode_text
 
 MAX_FRAMES = 2000
 

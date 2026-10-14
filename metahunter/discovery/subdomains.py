@@ -7,12 +7,14 @@ them are opt-in. Results are only names: nothing here touches the subdomains the
 import json
 import re
 import socket
+import time
 
 from ..control import run_parallel
 from ..net.http import FetchError
 from ..net.urls import HOSTNAME, host_of, is_same_or_subdomain
 
 SOURCE_TIMEOUT = 60
+RETRY_DELAY = 3
 MAX_RESPONSE = 32 * 1024 * 1024
 
 
@@ -72,10 +74,16 @@ def enumerate_subdomains(domain, sources, fetcher, events):
         if source not in SOURCES or events.stop_requested():
             continue
         events.log(f"Asking {source} for subdomains of {domain}...")
-        try:
-            names = clean_names(SOURCES[source](domain, fetcher), domain)
-        except (FetchError, ValueError, AttributeError, TypeError) as error:
-            events.log(f"  {source} failed: {error}")
+        names = None
+        for attempt in (1, 2):            # these free services are often briefly overloaded
+            try:
+                names = clean_names(SOURCES[source](domain, fetcher), domain)
+                break
+            except (FetchError, ValueError, AttributeError, TypeError) as error:
+                events.log(f"  {source} failed{' (will retry once)' if attempt == 1 else ''}: {error}")
+                if attempt == 1:
+                    time.sleep(RETRY_DELAY)
+        if names is None:
             continue
         events.log(f"  {source}: {len(names)} names")
         for name in names:

@@ -124,10 +124,10 @@ class _FindingCollector:
         self.groups = {}
 
     def add(self, kind, run, detail, chars):
-        if not chars or not "".join(text for text, _, _ in chars).strip():
+        if not chars or not "".join(char[0] for char in chars).strip():
             return
         key = (run.page, kind, detail, round(run.y / max(run.size * 0.4, 1.0)))
-        piece = (chars[0][1], chars[-1][1], "".join(text for text, _, _ in chars), run.size)
+        piece = (chars[0][1] - chars[0][3], chars[-1][1] + chars[-1][3], "".join(char[0] for char in chars), run.size)
         self.groups.setdefault(key, []).append(piece)
 
     def findings(self):
@@ -142,7 +142,7 @@ def _find_covered_text(runs, boxes, collector):
     for box in boxes:
         boxes_by_page.setdefault(box.page, []).append(box)
     for run in runs:
-        later_boxes = [box for box in boxes_by_page.get(run.page, []) if box.order > run.order]
+        later_boxes = [box for box in boxes_by_page.get(run.page, []) if box.order > run.order and box.opaque]
         if not later_boxes:
             continue
         covered, covers = [], set()

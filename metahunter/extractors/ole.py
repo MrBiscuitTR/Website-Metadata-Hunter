@@ -145,7 +145,6 @@ def read_property_set(stream):
             codepage = _read_property(stream, section + offset, codec)
             if isinstance(codepage, int):
                 codec = _codec_for(codepage & 0xFFFF)
-
     values = {}
     for property_id, offset in pairs:
         try:

@@ -7,6 +7,8 @@ Every value is HTML-escaped. Links are only made for http(s) URLs and our own fi
 
 from html import escape
 
+from .highlights import short_name
+
 CSS = """
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1d2330;background:#f4f6f9}
@@ -95,7 +97,7 @@ def _highlights(report):
 
 
 def _file_section(entry, category_titles):
-    name = entry["source"].rstrip("/").rsplit("/", 1)[-1] or entry["source"]
+    name = short_name(entry["source"])
     tags = [f'<span class="tag">{_text(entry.get("format", "-"))}</span>']
     if entry["status"] != "ok":
         tags.append(f'<span class="tag warn">{_text(entry["status"])}</span>')

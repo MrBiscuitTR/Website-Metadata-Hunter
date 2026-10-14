@@ -40,7 +40,6 @@ def scan_folder_name(target, when):
     host = host.rsplit("@", 1)[-1].replace(".", "-").replace(":", "-")
     parts = [host] + [part for part in path.split("/") if part]
     name = "_".join(re.sub(r"[^A-Za-z0-9-]+", "-", part).strip("-") for part in parts)
-
     name = re.sub(r"[-_]{2,}", "_", name).strip("_-")[:80] or "scan"
     return f"{name}_{when:%d%m%Y%H%M}"
 
@@ -86,7 +85,6 @@ class OutputFolder:
         root = self._ensure_created()
         path = root.joinpath(*parts).resolve()
         if path == root or root not in path.parents:
-
             raise ValueError(f"refusing to write outside the scan folder: {relative}")
         return path
 

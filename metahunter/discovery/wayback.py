@@ -25,7 +25,6 @@ def archived_files(domain, include_subdomains, file_types, fetcher, events, limi
     url = (f"https://web.archive.org/cdx/search/cdx?url={domain}&matchType={match_type}&output=json"
            f"&fl=timestamp,original,mimetype&collapse=urlkey&filter=statuscode:200"
            f"&filter={quote('mimetype:(' + mime_pattern + ')')}&limit={limit}")
-
     events.log("Asking the Wayback Machine for archived files...")
     try:
         rows = json.loads(fetcher.get(url, 64 * 1024 * 1024, timeout=90).body or b"[]")

@@ -111,7 +111,7 @@ class FileProcessor:
                 analysis = analyse_pdf(data)
             except Exception as error:   # a hostile PDF must not end the scan
                 meta.warnings.append(f"Redaction check failed: {type(error).__name__}: {error}")
-        if self.closed:
+        if self.closed or self.events.aborted():
             raise Cancelled()
         stem = safe_filename(name, "file")
         if self.options.save_files:
@@ -126,3 +126,178 @@ class FileProcessor:
             result.redaction = (write_analysis(analysis, self.folder, result.source, stem)
                                 if self.options.save_reports else summarise(analysis))
         return result
+
+
+def _download_and_process(reference, fetcher, processor, options):
+    result = FileResult(reference.url, sorted(reference.found_on), reference.archived_from)
+    source = reference.archived_from or reference.url
+    try:
+        if reference.inline_data is not None:
+            data, headers = reference.inline_data, {}
+            name = f"inline_{reference.url.split(':')[1]}.{reference.url.rsplit('/', 1)[-1]}"
+        elif reference.prefetched is not None:
+            data, headers = reference.prefetched.body, reference.prefetched.headers
+            name = file_name_of(source)
+        else:
+            response = fetcher.get(reference.url, int(options.max_file_mb * 1024 * 1024))
+            data, headers, name = response.body, response.headers, file_name_of(source)
+    except FetchError as error:
+        result.status = f"error: {error}"
+        return result
+    return processor.process(result, data, headers, name, host_of(source) or "inline")
+
+
+def _process_files(jobs, worker, processor, events, threads):
+    def report(result, done, total):
+        events.progress(done, total, result.source)
+        if result.status not in ("ok", "duplicate"):
+            events.log(f"  {result.source}: {result.status}")
+
+    try:
+        return run_parallel(jobs, worker, threads, events, on_result=report)
+    finally:
+        processor.closed = True
+
+
+def _finish(result, events):
+    result.stopped = events.stop_requested()
+    result.aborted = events.aborted()
+    result.finished = datetime.datetime.now()
+    result.pages = list(result.pages)            # may still be a live view if the crawl was cut short
+    if result.stopped and not result.aborted:
+        events.log("Stopped early; writing what was collected so far.")
+    if result.options.save_reports and not result.aborted:
+        result.report_files = write_reports(result, events)
+    return result
+
+
+def run_scan(options, events):
+    options = dataclasses.replace(options)     # the scan may widen the scope; keep the caller's copy intact
+    started = datetime.datetime.now()
+    target = normalise_target(options.target)
+    start_host = host_of(target)
+    domain = base_domain(start_host)
+    fetcher = Fetcher(options.user_agent or DEFAULT_USER_AGENT, options.timeout, options.delay,
+                      options.verify_tls, options.allow_private, control=events)
+    fetcher.check_allowed(target)        # fail early on private addresses or DNS problems
+
+    folder = OutputFolder(scans_folder(options), scan_folder_name(target, started))
+    result = ScanResult(target, folder, options, started)
+    events.log(f"Scan folder: {folder.root}")
+    exiftool, result.metadata_engine = load_exiftool(events)
+    try:
+        _scan_phases(result, options, target, start_host, domain, fetcher, folder, exiftool, events)
+    except Cancelled:
+        pass
+    return _finish(result, events)
+
+
+def _scan_phases(result, options, target, start_host, domain, fetcher, folder, exiftool, events):
+    # 1. Subdomains from third-party sources (opt-in)
+    third_party = [source for source in options.subdomain_sources if source != "links"]
+    found = enumerate_subdomains(domain, third_party, fetcher, events) if third_party else {}
+
+    # 2. Crawl
+    crawler = Crawler(options, fetcher, events)
+    result.pages = crawler.pages.values()
+    seeds = [target]
+    if options.use_sitemap:
+        parts = urlsplit(target)
+        for url in crawler.sitemap_urls(f"{parts.scheme}://{parts.netloc}"):
+            if not in_scope(url, start_host, options.scope):
+                continue
+            if not known_file_extension(extension_of(url)):
+                seeds.append(url)
+            elif crawler.file_category(url, None):
+                crawler.add_file(url, crawler.file_category(url, None), "(sitemap)")
+        events.log(f"Sitemaps added {len(seeds) - 1} page(s).")
+    if options.crawl_subdomains and found:
+        live = [name for name, alive in resolve_names(found, events).items() if alive]
+        seeds += [f"https://{name}/" for name in live]
+        if options.scope == "host":
+            options.scope = "domain"
+            events.log("Crawling subdomains: scope widened to this domain and its subdomains.")
+    crawler.crawl(seeds, start_host)
+    result.pages = list(crawler.pages.values())
+    events.log(f"Visited {len(result.pages)} page(s), found {len(crawler.files)} file(s).")
+
+    # 3. Subdomains seen in links, and which names resolve
+    if "links" in options.subdomain_sources:
+        for host in crawler.hosts_seen:
+            if host != domain and is_same_or_subdomain(host, domain):
+                found.setdefault(host, set()).add("links")
+    if found:
+        alive = resolve_names(found, events)
+        result.subdomains = {name: {"sources": sorted(sources), "resolves": alive.get(name)}
+                             for name, sources in sorted(found.items())}
+
+    # 4. Archived copies from the Wayback Machine (opt-in)
+    if options.wayback_files and not events.stop_requested():
+        for archive_url, original, category in archived_files(domain, options.scope != "host", options.file_types,
+                                                              fetcher, events, limit=options.max_files):
+            crawler.add_file(archive_url, category, "web.archive.org", archived_from=original)
+
+    # 5. Download and read every file
+    processor = FileProcessor(options, folder, events, exiftool)
+    references = list(crawler.files.values())[:options.max_files]
+    events.log(f"Downloading and reading {len(references)} file(s)...")
+    result.files = _process_files(references, lambda ref: _download_and_process(ref, fetcher, processor, options),
+                                  processor, events, options.threads)
+
+
+def _local_files(paths, limit, extensions=None):
+    """Expand files and folders (recursively) into a list of files, up to `limit`.
+
+    Folders are filtered by `extensions` when given; files named explicitly are always kept.
+    """
+    found = []
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if path.is_dir():
+            candidates = sorted(p for p in path.rglob("*") if p.is_file()
+                                and (not extensions or p.suffix.lower().lstrip(".") in extensions))
+        else:
+            candidates = [path]
+        for candidate in candidates:
+            if candidate.is_file() and len(found) < limit:
+                found.append(candidate.resolve())
+    return found
+
+
+def inspect_local(paths, options, events, extensions=None):
+    """Same per-file processing as a scan, for files already on disk. No network at all."""
+    started = datetime.datetime.now()
+    files = _local_files(paths, options.max_files, extensions)
+    if not files:
+        raise FileNotFoundError("no files found at: " + ", ".join(map(str, paths)))
+    label = f"local_{files[0].stem}" if len(files) == 1 else f"local_{Path(paths[0]).name or 'files'}"
+    folder = OutputFolder(scans_folder(options), scan_folder_name(label, started))
+    result = ScanResult("local files: " + ", ".join(map(str, paths)), folder, options, started)
+    events.log(f"Scan folder: {folder.root}")
+    exiftool, result.metadata_engine = load_exiftool(events)
+    processor = FileProcessor(options, folder, events, exiftool)
+    limit = int(options.max_file_mb * 1024 * 1024)
+
+    def read_one(path):
+        file_result = FileResult(str(path), [])
+        if path.stat().st_size > limit:
+            file_result.status = f"skipped: larger than {options.max_file_mb:g} MB"
+            return file_result
+        return processor.process(file_result, path.read_bytes(), {}, path.name, "local")
+
+    events.log(f"Reading {len(files)} local file(s)...")
+    result.files = _process_files(files, read_one, processor, events, options.threads)
+    return _finish(result, events)
+
+
+def lookup_subdomains(domain, sources, options, events):
+    """Only enumerate subdomains: {name: {"sources": [...], "resolves": bool}}."""
+    fetcher = Fetcher(options.user_agent or DEFAULT_USER_AGENT, options.timeout, 0.0, options.verify_tls,
+                      control=events)
+    domain = base_domain(host_of(normalise_target(domain)))
+    try:
+        found = enumerate_subdomains(domain, sources, fetcher, events)
+    except Cancelled:
+        return {}
+    alive = resolve_names(found, events) if found else {}
+    return {name: {"sources": sorted(found[name]), "resolves": alive.get(name)} for name in sorted(found)}

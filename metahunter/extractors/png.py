@@ -47,7 +47,6 @@ def extract(data, meta):
     trailing = len(data) - position
     if trailing > 16:
         meta.add_deep("hidden", "Data after end of image", f"{trailing} bytes (appended file?)")
-
         meta.add_embedded("Data after end of image", "bin", data[position:])
 
 
@@ -77,7 +76,6 @@ def _handle_chunk(chunk_type, body, meta):
             parse_icc(inflate(rest[1:]), meta)
         except Exception as error:  # zlib.error, TooLarge or a truncated profile
             meta.warnings.append(f"Unreadable ICC profile: {error}")
-
     elif chunk_type == b"acTL" and len(body) >= 8:
         meta.add("technical", "Animated (APNG) frames", struct.unpack_from(">I", body)[0])
     elif chunk_type == b"caBX":

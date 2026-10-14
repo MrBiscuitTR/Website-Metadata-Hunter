@@ -4,6 +4,8 @@ import shlex
 
 from ..net.urls import SCOPES, normalise_target
 from ..options import FILE_TYPES, INFO_CATEGORIES, SUBDOMAIN_SOURCES, ScanOptions
+from .views import VIEWS
+
 
 
 def ask_text(prompt, default=""):
@@ -76,8 +78,9 @@ def ask_checkboxes(prompt, choices, selected):
                     print(f"  Ignored {part!r}: not a number in the list.")
 
 
-def equivalent_command(options):
+def equivalent_command(options, views):
     """The `hunter.py scan ...` command that reproduces these options."""
+
     defaults = ScanOptions()
     parts = ["python", "hunter.py", "scan", options.target]
     flags = [("depth", "-d"), ("scope", "--scope"), ("max_pages", "--max-pages"), ("max_files", "--max-files"),
@@ -93,8 +96,11 @@ def equivalent_command(options):
                 ("follow_stylesheets", False, "--no-css"), ("respect_robots", False, "--ignore-robots"),
                 ("wayback_files", True, "--wayback-files"), ("crawl_subdomains", True, "--crawl-subdomains"),
                 ("redaction_check", False, "--no-redaction-check"), ("save_files", False, "--no-save-files"),
-                ("save_embedded", False, "--no-embedded"), ("leak_scan", False, "--no-leak-scan")]
+                ("save_embedded", False, "--no-embedded"), ("leak_scan", False, "--no-leak-scan"),
+                ("save_reports", False, "--no-report-files")]
     parts += [flag for field_name, value, flag in switches if getattr(options, field_name) == value]
+    if views != ["summary"]:
+        parts += ["--view", ",".join(views) or "none"]
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -142,6 +148,11 @@ def build_options():
     options.save_files = ask_yes_no("Keep copies of the downloaded files", True)
     options.save_embedded = ask_yes_no("Save thumbnails, cover art and attachments found inside files", True)
 
+    print("\n-- Output --")
+    options.save_reports = ask_yes_no("Save the reports (HTML, JSON, text, PDF analysis) to the scan folder", True)
+    views = ask_checkboxes("What to print here when the scan is done:", list(VIEWS.items()), ["summary"])
+
+
     if ask_yes_no("\nAdjust advanced settings (limits, speed, robots.txt)", False):
         options.max_files = ask_number("Maximum number of files", options.max_files, 1, 100_000)
         options.max_file_mb = ask_number("Maximum file size in MB", options.max_file_mb, 0.1, 10_000, float)
@@ -149,18 +160,20 @@ def build_options():
         options.delay = ask_number("Seconds between requests", options.delay, 0.0, 60.0, float)
         options.respect_robots = ask_yes_no("Obey robots.txt", True)
         options.leak_scan = ask_yes_no("Search files for leaked user folders and emails", True)
-    return options
+    return options, views
+
 
 
 def run_wizard(terminal):
     from .main import command_scan
     try:
-        options = build_options()
+        options, views = build_options()
         print("\nThe same scan as a command (for next time):")
-        print(f"  {equivalent_command(options)}\n")
+        print(f"  {equivalent_command(options, views)}\n")
         if not ask_yes_no("Start the scan now", True):
             return 0
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled.")
         return 1
-    return command_scan(options, terminal)
+    return command_scan(options, views, terminal)
+

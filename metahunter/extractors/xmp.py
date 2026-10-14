@@ -65,7 +65,6 @@ KNOWN_FIELDS = {
     "exif:GPSAltitude": ("GPS altitude", "location"),
     "exif:GPSLatitude": ("GPS latitude (raw)", "location"),
     "exif:GPSLongitude": ("GPS longitude (raw)", "location"),
-
     "tiff:Make": ("Camera make", "device"),
     "tiff:Model": ("Camera model", "device"),
     "tiff:Software": ("Software", "software"),
@@ -151,7 +150,6 @@ def parse_xmp(packet, meta):
 
     gps = {}
     for prefix, name, _list_kind, items in LIST_ELEMENT.findall(text):
-
         values = [html.unescape(item).strip() for item in LIST_ITEM.findall(items)]
         _report(meta, prefix, name, "; ".join(value for value in values if value))
     for prefix, name, value in SIMPLE_ELEMENT.findall(text):

@@ -28,7 +28,10 @@ class ScanEvents:
 
     def log(self, message):
         self.lines.append(f"{datetime.datetime.now():%H:%M:%S} {message}")
-        self._on_log(message)
+        try:
+            self._on_log(message)
+        except (UnicodeError, OSError):    # a console that cannot show a character must not end the scan
+            pass
 
     def progress(self, done, total, label=""):
         if self._on_progress:

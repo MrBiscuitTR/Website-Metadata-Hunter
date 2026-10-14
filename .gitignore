@@ -180,3 +180,6 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .notes-to-self.md
+
+# Scan results (downloaded files, reports)
+.scans/

@@ -137,7 +137,6 @@ class Crawler:
         charset = re.search(r"charset=([\w-]+)", response.headers.get("content-type", ""))
         encoding = charset.group(1) if charset and _codec_exists(charset.group(1)) else "utf-8"
         found = parse_page(response.body.decode(encoding, "replace"), response.url)
-
         record.title, record.generator, record.author = found.title, found.generator, found.author
         record.emails = sorted(found.emails)
 

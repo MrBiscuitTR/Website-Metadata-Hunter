@@ -72,7 +72,6 @@ class ScanOptions:
     redaction_check: bool = True
     save_reports: bool = True         # report.html / report.json / summary.txt and the PDF analysis folders
     save_files: bool = True
-
     save_embedded: bool = True        # thumbnails, cover art, attachments found inside files
     leak_scan: bool = True
 

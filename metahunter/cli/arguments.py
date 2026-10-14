@@ -3,6 +3,7 @@
 import argparse
 
 from ..options import FILE_TYPES, INFO_CATEGORIES, SUBDOMAIN_SOURCES, ScanOptions
+from .views import VIEWS
 from ..net.urls import SCOPES
 
 
@@ -38,6 +39,15 @@ def add_report_arguments(parser, defaults):
     group.add_argument("--output", dest="output_dir", default="", metavar="DIR", help="where scan folders go (default .scans)")
 
 
+def add_output_arguments(parser):
+    group = parser.add_argument_group("output")
+    group.add_argument("--view", dest="views", type=name_list(VIEWS), default=["summary"], metavar="LIST",
+                       help="what to print when done: " + "; ".join(f"{name}: {text}" for name, text in VIEWS.items())
+                       + " (default summary; several allowed, or none)")
+    group.add_argument("--no-report-files", dest="save_reports", action="store_false",
+                       help="do not write report.html / report.json / summary.txt / pdf_analysis")
+
+
 def add_scan_arguments(parser):
     defaults = ScanOptions()
     parser.add_argument("target", help="domain, subdomain or page URL, e.g. example.com or https://example.com/about")
@@ -65,6 +75,7 @@ def add_scan_arguments(parser):
                        help=f"file types: {','.join(FILE_TYPES)}, or all (default)")
     files.add_argument("--no-save-files", dest="save_files", action="store_false", help="read files in memory only")
     add_report_arguments(parser, defaults)
+    add_output_arguments(parser)
 
     network = parser.add_argument_group("network")
     network.add_argument("--delay", type=float, default=defaults.delay, metavar="SECONDS", help="pause between requests (default %(default)s)")
@@ -84,9 +95,11 @@ def build_parser():
     inspect.add_argument("paths", nargs="+", help="files or folders (folders are read recursively)")
     inspect.add_argument("--save-copies", dest="save_files", action="store_true", help="also copy the files into the scan folder")
     add_report_arguments(inspect, ScanOptions())
+    add_output_arguments(inspect)
     pdf = commands.add_parser("pdf", help="redaction / hidden-text check of local PDFs (no network)")
     pdf.add_argument("paths", nargs="+", help="PDF files or folders")
     pdf.add_argument("--output", dest="output_dir", default="", metavar="DIR", help="where scan folders go (default .scans)")
+    add_output_arguments(pdf)
     subdomains = commands.add_parser("subdomains", help="list subdomains from public sources")
     subdomains.add_argument("domain")
     subdomains.add_argument("--sources", type=name_list(SUBDOMAIN_SOURCES), metavar="LIST",

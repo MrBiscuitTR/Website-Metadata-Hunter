@@ -87,13 +87,13 @@ def summarise(analysis, folder=None):
     findings = [f"page {finding.page}: {finding.text}  [{finding.detail}]" for finding in analysis.findings]
     findings += [f"earlier revision {revision.number}: {line}" for revision in analysis.revisions
                  for line in revision.removed_lines]
+    # Invisible text alone is normal (OCR layers, "Powered by" tags), so it is listed but does not raise the flag.
     return {"folder": folder, "counts": counts, "findings": findings[:50],
-            "hidden_text_found": any(value for key, value in counts.items() if key != "revisions")}
+            "hidden_text_found": any(value for key, value in counts.items() if key not in ("revisions", "invisible"))}
 
 
 def write_analysis(analysis, folder, source, name):
     """Save everything under pdf_analysis/<name>/ and return a short summary for the main report."""
-
     base = f"pdf_analysis/{safe_filename(name, 'document')}"
     summary_path = folder.write_text(f"{base}/summary.txt", _summary_text(analysis, source))
     base = folder.relative(summary_path.parent)       # the folder name may have gained a suffix
@@ -105,8 +105,8 @@ def write_analysis(analysis, folder, source, name):
     runs += [f"{r.page}\t{r.order}\t{r.x:.1f}\t{r.y:.1f}\t{r.size:.2f}\t{_tsv(r.font)}\t{r.render_mode}\t"
              f"{_tsv(r.fill)}\t{_tsv(r.text)}" for r in analysis.runs]
     folder.write_text(f"{base}/text_runs.tsv", "\n".join(runs) + "\n")
-    shapes = ["page\torder\tkind\tx0\ty0\tx1\ty1\tfill"]
-    shapes += [f"{b.page}\t{b.order}\t{b.kind}\t" + "\t".join(f"{v:.1f}" for v in b.bbox) + f"\t{_tsv(b.fill)}"
+    shapes = ["page\torder\tkind\tx0\ty0\tx1\ty1\tfill\topaque"]
+    shapes += [f"{b.page}\t{b.order}\t{b.kind}\t" + "\t".join(f"{v:.1f}" for v in b.bbox) + f"\t{_tsv(b.fill)}\t{b.opaque}"
                for b in analysis.boxes]
     folder.write_text(f"{base}/painted_shapes.tsv", "\n".join(shapes) + "\n")
     folder.write_text(f"{base}/objects.txt", "\n".join(analysis.object_listing) + "\n")
@@ -117,6 +117,5 @@ def write_analysis(analysis, folder, source, name):
                           "\n".join(revision.removed_lines) + "\n")
     for attachment_name, content in analysis.embedded_files:
         folder.write_bytes(f"{base}/attachments/{safe_filename(attachment_name, 'attachment')}", content)
-
     return summarise(analysis, base)
 

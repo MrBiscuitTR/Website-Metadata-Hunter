@@ -2,7 +2,7 @@
 
 import posixpath
 import re
-from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
 ALLOWED_SCHEMES = ("http", "https")
 SCOPES = {
@@ -21,10 +21,11 @@ def normalise_target(text):
     parts = urlsplit(text)
     if parts.scheme.lower() not in ALLOWED_SCHEMES:
         raise ValueError(f"only http and https addresses can be scanned, not {parts.scheme}")
-    host = (parts.hostname or "").lower()
+    netloc = _ascii_netloc(parts.netloc.lower())
+    host = urlsplit(f"//{netloc}").hostname or ""
     if not host or not (HOSTNAME.match(host) or re.match(r"^[0-9.]+$|^\[?[0-9a-f:]+\]?$", host)):
-        raise ValueError(f"not a valid host name: {host or text}")
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", parts.query, ""))
+        raise ValueError(f"not a valid host name: {parts.hostname or text}")
+    return urlunsplit((parts.scheme.lower(), netloc, _encode(parts.path or "/"), _encode(parts.query), ""))
 
 
 def clean_url(url, base=None):
@@ -36,8 +37,30 @@ def clean_url(url, base=None):
         return None
     if parts.scheme.lower() not in ALLOWED_SCHEMES or not parts.hostname:
         return None
-    path = parts.path or "/"
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
+    return urlunsplit((parts.scheme.lower(), _ascii_netloc(parts.netloc.lower()), _encode(parts.path or "/"),
+                       _encode(parts.query), ""))
+
+
+# Characters that may stay as they are; existing %XX escapes are kept, everything else is encoded.
+SAFE_URL_CHARACTERS = "/%:@!$&'()*+,;=~-._?"
+
+
+def _encode(text):
+    """Percent-encode spaces and non-ASCII characters, as browsers do before sending a request."""
+    return quote(text, safe=SAFE_URL_CHARACTERS)
+
+
+def _ascii_netloc(netloc):
+    """Internationalised host names (bÃ¼cher.de) become their ASCII "xn--" form."""
+    if netloc.isascii():
+        return netloc
+    userinfo, at, hostport = netloc.rpartition("@")
+    host, colon, port = hostport.partition(":")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        pass
+    return f"{userinfo}{at}{host}{colon}{port}"
 
 
 def host_of(url):
@@ -62,7 +85,6 @@ def in_scope(url, start_host, scope):
         return bool(host)
     if scope == "host":   # example.com and www.example.com count as the same host
         return base_domain(host) == base_domain(start_host)
-
     return is_same_or_subdomain(host, base_domain(start_host))
 
 

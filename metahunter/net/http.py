@@ -66,7 +66,6 @@ class Fetcher:
                  allow_private=False, control=None):
         self.control = control          # ScanEvents: pauses and stops reach every request
         self.user_agent = user_agent
-
         self.timeout = timeout
         self.delay = delay
         self.allow_private = allow_private
@@ -126,7 +125,6 @@ class Fetcher:
         self._wait_turn()
         if self.control:
             self.control.checkpoint()
-
         request = urllib.request.Request(url, headers={
             "User-Agent": self.user_agent, "Accept": accept, "Accept-Encoding": "identity"})
         try:
@@ -135,8 +133,7 @@ class Fetcher:
                 if declared.isdigit() and int(declared) > max_bytes:
                     raise TooLarge(f"{int(declared):,} bytes is over the {max_bytes:,} byte limit")
                 body = self._read_body(response, max_bytes)
-                headers
- = {name.lower(): value for name, value in response.headers.items()}
+                headers = {name.lower(): value for name, value in response.headers.items()}
                 return Response(response.geturl(), response.status, headers, body)
         except urllib.error.HTTPError as error:
             raise FetchError(f"HTTP {error.code} {error.reason}") from None

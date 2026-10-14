@@ -14,8 +14,9 @@ PATH_PART = r"[\w .()&,+~$#@!-]{1,100}"
 PATTERNS = {
     "Windows user folder": re.compile(rf"[A-Za-z]:\x5c(?:Users|Documents and Settings)(?:\x5c{PATH_PART}){{1,8}}"),
     "Unix / macOS home folder": re.compile(rf"/(?:home|Users)/[\w.-]{{1,64}}(?:/{PATH_PART}){{0,8}}"),
-    "Network share": re.compile(rf"\x5c\x5c[\w.-]{{2,63}}(?:\x5c{PATH_PART}){{1,8}}"),
-    "Email address": re.compile(r"\b[\w.%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}\b"),
+    "Network share": re.compile(rf"\x5c\x5c[A-Za-z][\w.-]{{2,62}}(?:\x5c\w[\w .()&,+~$#@!-]{{1,99}}){{1,8}}"),
+    # Lower-case top-level domain only: binary noise rarely produces one, real addresses nearly always do.
+    "Email address": re.compile(r"\b[\w.%+-]{2,64}@[A-Za-z0-9][A-Za-z0-9-]{1,62}(?:\.[A-Za-z0-9-]{1,63})*\.[a-z]{2,24}\b"),
 }
 USERNAME_IN_PATH = re.compile(r"(?:\x5cUsers\x5c|\x5cDocuments and Settings\x5c|/home/|/Users/)([^\x5c/]+)")
 IGNORED_USERNAMES = {"public", "default", "all users", "shared", "runner", "user", "admin"}

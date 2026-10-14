@@ -22,7 +22,6 @@ def build_pdf(objects, root=1, info=None, previous=b""):
     trailer = b"/Size %d /Root %d 0 R" % (max(offsets) + 1, root)
     if previous:
         trailer += b" /Prev " + previous.rsplit(b"startxref", 1)[1].split()[0]
-
     if info:
         trailer += b" /Info %d 0 R" % info
     output += b"trailer\n<< " + trailer + b" >>\nstartxref\n%d\n%%%%EOF\n" % xref_position

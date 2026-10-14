@@ -40,7 +40,6 @@ def collect_highlights(result, categories):
                     continue
                 entry = values.setdefault(value, (label, set()))
                 entry[1].add(short_name(item.source))
-
         highlights[category] = sorted(((value, label, sorted(files)) for value, (label, files) in values.items()),
                                       key=lambda row: (-len(row[2]), row[0].lower()))
     if "location" in categories:

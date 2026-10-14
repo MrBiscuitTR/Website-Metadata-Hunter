@@ -85,7 +85,6 @@ class Metadata:
         return subset
 
     def add_gps(self, latitude, longitude, label, deep=False):
-
         if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
             self.warnings.append(f"{label}: coordinates out of range ({latitude}, {longitude})")
             return
@@ -109,7 +108,6 @@ class Metadata:
                 self.add(category, f"{prefix}{label}", value, deep=True)
         for latitude, longitude, label in other.gps_points:
             self.add_gps(latitude, longitude, f"{prefix}{label}", deep=True)
-
         for label, extension, data in other.embedded:
             self.add_embedded(f"{prefix}{label}", extension, data)
         self.warnings.extend(f"{prefix}{warning}" for warning in other.warnings)
@@ -125,7 +123,6 @@ class Metadata:
         self.warnings.extend(other.warnings)
 
     def grouped(self, categories=None):
-
         """{category: [(label, value), ...]}, optionally limited to some categories."""
         groups = {}
         for category, label, value in self.fields:

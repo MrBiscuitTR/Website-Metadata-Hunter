@@ -5,7 +5,7 @@ import json
 
 from .. import __version__
 from ..options import INFO_CATEGORIES
-from .highlights import HIGHLIGHT_CATEGORIES, collect_highlights, counts, short_name
+from .highlights import HIGHLIGHT_CATEGORIES, collect_highlights, counts
 from .html_report import render_html
 
 
@@ -96,6 +96,3 @@ def write_reports(result, events):
     events.log(f"Reports written to {folder.root}")
     paths["log"] = folder.write_text("scan.log", "\n".join(events.lines) + "\n")
     return paths
-
-
-__all__ = ["write_reports", "build_report", "short_name"]
